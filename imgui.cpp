@@ -1,3 +1,4 @@
+#include "vd_path/vd_native_text.h"
 // dear imgui, v1.92.3
 // (main code and documentation)
 
@@ -1153,6 +1154,7 @@ IMPLEMENTING SUPPORT for ImGuiBackendFlags_RendererHasTextures:
 #endif
 
 #include "imgui.h"
+#include "vd_path/vd_path.h"
 #ifndef IMGUI_DISABLE
 #include "imgui_internal.h"
 
@@ -2514,28 +2516,13 @@ const char* ImHashSkipUncontributingPrefix(const char* label)
 // Default file functions
 #ifndef IMGUI_DISABLE_DEFAULT_FILE_FUNCTIONS
 
+/** @brief Open a declared UTF-8 ImGui filename through strict native path admission. */
 ImFileHandle ImFileOpen(const char* filename, const char* mode)
 {
-#if defined(_WIN32) && !defined(IMGUI_DISABLE_WIN32_FUNCTIONS) && (defined(__MINGW32__) || (!defined(__CYGWIN__) && !defined(__GNUC__)))
-    // We need a fopen() wrapper because MSVC/Windows fopen doesn't handle UTF-8 filenames.
-    // Previously we used ImTextCountCharsFromUtf8/ImTextStrFromUtf8 here but we now need to support ImWchar16 and ImWchar32!
-    const int filename_wsize = ::MultiByteToWideChar(CP_UTF8, 0, filename, -1, NULL, 0);
-    const int mode_wsize = ::MultiByteToWideChar(CP_UTF8, 0, mode, -1, NULL, 0);
-
-    // Use stack buffer if possible, otherwise heap buffer. Sizes include zero terminator.
-    // We don't rely on current ImGuiContext as this is implied to be a helper function which doesn't depend on it (see #7314).
-    wchar_t local_temp_stack[FILENAME_MAX];
-    ImVector<wchar_t> local_temp_heap;
-    if (filename_wsize + mode_wsize > IM_ARRAYSIZE(local_temp_stack))
-        local_temp_heap.resize(filename_wsize + mode_wsize);
-    wchar_t* filename_wbuf = local_temp_heap.Data ? local_temp_heap.Data : local_temp_stack;
-    wchar_t* mode_wbuf = filename_wbuf + filename_wsize;
-    ::MultiByteToWideChar(CP_UTF8, 0, filename, -1, filename_wbuf, filename_wsize);
-    ::MultiByteToWideChar(CP_UTF8, 0, mode, -1, mode_wbuf, mode_wsize);
-    return ::_wfopen(filename_wbuf, mode_wbuf);
-#else
-    return fopen(filename, mode);
-#endif
+    if (!filename) { errno = EINVAL; return nullptr; }
+    auto admitted = vdas::path::parseUtf8(filename, "imgui.filename");
+    if (!admitted) { errno = EILSEQ; return nullptr; }
+    return vdas::path::openCFile(admitted.value(), mode);
 }
 
 // We should in theory be using fseeko()/ftello() with off_t and _fseeki64()/_ftelli64() with __int64, waiting for the PR that does that in a very portable pre-C++11 zero-warnings way.
@@ -21484,17 +21471,18 @@ static void Platform_SetClipboardTextFn_DefaultImpl(ImGuiContext* ctx, const cha
 #endif
 static bool Platform_OpenInShellFn_DefaultImpl(ImGuiContext*, const char* path)
 {
-    const int path_wsize = ::MultiByteToWideChar(CP_UTF8, 0, path, -1, NULL, 0);
-    ImVector<wchar_t> path_wbuf;
-    path_wbuf.resize(path_wsize);
-    ::MultiByteToWideChar(CP_UTF8, 0, path, -1, path_wbuf.Data, path_wsize);
-    return (INT_PTR)::ShellExecuteW(NULL, L"open", path_wbuf.Data, NULL, NULL, SW_SHOWDEFAULT) > 32;
+    const auto target = vdas::path::nativeText(path, "imgui-shell-target");
+    if (!target) return false;
+    return (INT_PTR)::ShellExecuteW(NULL, L"open", target.value().c_str(), NULL, NULL, SW_SHOWDEFAULT) > 32;
 }
 #else
 #include <sys/wait.h>
 #include <unistd.h>
 static bool Platform_OpenInShellFn_DefaultImpl(ImGuiContext*, const char* path)
 {
+    const auto target = vdas::path::nativeText(path, "imgui-shell-target");
+    if (!target) return false;
+    path = target.value().c_str();
 #if defined(__APPLE__)
     const char* args[] { "open", "--", path, NULL };
 #else

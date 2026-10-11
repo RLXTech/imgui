@@ -1,3 +1,4 @@
+#include "vd_path/vd_path.h"
 // dear imgui, v1.92.3
 // (demo code)
 
@@ -11875,7 +11876,9 @@ namespace ImGuiDemoMarkerCodeViewer_Impl
 
         char* ReadSourceCodeContent(const char* source_file)
         {
-            FILE *f = fopen(source_file, "rb"); // binary mode for windows (do not translate \n)
+            auto admitted = vdas::path::parseUtf8(source_file, "imgui-demo-source");
+            if (!admitted) return NULL;
+            FILE *f = vdas::path::openCFile(admitted.value(), "rb"); // binary mode for windows (do not translate \n)
             if (f == NULL)
             {
                 return NULL;
@@ -11888,6 +11891,7 @@ namespace ImGuiDemoMarkerCodeViewer_Impl
             if (nb_bytes_read != file_size)
             {
                 IM_FREE(source_code);
+                fclose(f);
                 return NULL;
             }
             else
